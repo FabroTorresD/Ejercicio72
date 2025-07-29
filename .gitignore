@@ -1,0 +1,15 @@
+# Entorno virtual
+venv/
+
+# Cachés de Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Archives, logs
+*.log
+
+# IDEs / SO
+.DS_Store
+.vscode/
+.idea/
