@@ -31,7 +31,7 @@ st.title("Centro de Salud – Simulación (Ej. 72)")
 st.sidebar.markdown("**Parámetros básicos**")
 media_llegada      = st.sidebar.number_input("Media entre llegadas de pacientes (min)", 0.5, 30.0, 3.0)
 a1, b1             = st.sidebar.slider("Atención mesa de turnos (min)", 0.5, 10.0, (1.0, 3.0))
-p_sin_obra         = st.sidebar.slider("Proporción SIN obra social", 0.0, 1.0, 0.55, 0.05)  # Corregido: 55% sin obra
+p_sin_obra         = st.sidebar.slider("Proporción SIN obra social", 0.0, 1.0, 0.45, 0.05)  # 45% sin obra social
 tiempo_informe     = st.sidebar.number_input("Tiempo informe obra social (min)", 0.1, 1.0, 0.1667)
 a2, b2             = st.sidebar.slider("Abono cooperadora (min)", 0.1, 10.0, (0.8, 2.4))
 
@@ -69,16 +69,15 @@ class Paciente:
         self.tiene_obra_social = tiene_obra_social
         self.tiempo_llegada = tiempo_llegada
         self.tiempo_inicio_espera = None
-        self.veces_esperado = 0
 
 # -----------------------------------------------------------
-# 4) Simulación mejorada
+# 4) Simulación
 # -----------------------------------------------------------
 
 def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float,
                 p_sin_obra: float, tiempo_informe: float, t_llamada: float, c1: float, c2: float,
                 ini_mesa: int, ini_coop: int, falta_llamada: float, t_limite: float):
-    """Devuelve df, tiempo_promedio_espera, llamadas_perdidas, objetos_df"""
+    """Devuelve df, tiempo_promedio_espera, llamadas_perdidas"""
 
     # ── Variables reloj y eventos ────────────────────────────
     reloj: float = 0.0
@@ -89,11 +88,11 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
 
     # Programar primera llamada
     prox_llamada: float = falta_llamada
-    fin_llamada: float = math.inf
+    fin_llamada: float = float('inf')
 
     # Eventos de atención
-    fin_atencion: float = math.inf
-    fin_pago: float = math.inf
+    fin_atencion: float = float('inf')
+    fin_pago: float = float('inf')
 
     # ── Colas & servidores ──────────────────────────────────
     cola_mesa: list[Paciente] = []
@@ -108,7 +107,7 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
 
     # Inicializar pacientes en cola de pago
     for i in range(ini_coop):
-        pac = Paciente(f"C{i+1}", False, 0.0)  # Sin obra social
+        pac = Paciente(f"CP{i+1}", False, 0.0)  # Sin obra social
         cola_pago.append(pac)
 
     # Estados de servidores
@@ -116,7 +115,7 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
     coop_ocupada: bool = len(cola_pago) > 0
     linea_ocupada: bool = False
 
-    # Si hay pacientes esperando pago, iniciar el servicio
+    # Si hay pacientes esperando pago, calcular fin_pago inicial
     if coop_ocupada:
         rnd_pago, tiempo_pago = gen_uniforme(a2, b2)
         fin_pago = tiempo_pago
@@ -126,135 +125,110 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
     espera_total = 0.0
     cnt_esperas = 0
     
-    # Paciente actualmente siendo atendido
+    # Pacientes actualmente siendo atendidos
     paciente_en_atencion = None
     paciente_en_pago = None
     if cola_pago:
         paciente_en_pago = cola_pago.pop(0)
 
+    # Para generar IDs únicos
+    next_id = count(start=100)
+    
     # Listas para almacenar datos
     filas = []
-    objetos_temporales = []
-    next_id = count(start=max(ini_mesa, ini_coop) + 10)
+
+    def formatear_valor(valor):
+        """Formatea valores para mostrar, evitando infinitos"""
+        if valor == float('inf') or valor == float('-inf'):
+            return ""
+        return f"{valor:.3f}" if isinstance(valor, (int, float)) else str(valor)
 
     def registrar(evento: str, extra: dict = None):
-        """Crea una fila con la información del vector estado con MultiIndex mejorado."""
+        """Registra el estado actual del sistema"""
         
-        # Calcular próximos eventos (sin infinitos)
-        prox_llegada_str = f"{prox_llegada_pac:.3f}" if prox_llegada_pac != math.inf else ""
-        prox_llamada_str = f"{prox_llamada:.3f}" if prox_llamada != math.inf else ""
-        fin_llamada_str = f"{fin_llamada:.3f}" if fin_llamada != math.inf else ""
-        fin_atencion_str = f"{fin_atencion:.3f}" if fin_atencion != math.inf else ""
-        fin_pago_str = f"{fin_pago:.3f}" if fin_pago != math.inf else ""
-        
-        # Estados de servidores
-        estado_mesa = "Ocupado" if mesa_ocupada else "Libre"
-        estado_coop = "Ocupado" if coop_ocupada else "Libre"
-        estado_linea = "Ocupado" if linea_ocupada else "Libre"
-        
-        # Colas
-        cola_mesa_ids = [p.id for p in cola_mesa]
-        cola_pago_ids = [p.id for p in cola_pago]
-        
-        # Preparar objetos temporales
-        objetos_temp = {}
-        obj_num = 1
+        # Todos los objetos temporales (pacientes en el sistema)
+        objetos_temporales = []
         
         # Pacientes en cola mesa
         for pac in cola_mesa:
-            if obj_num <= 4:
-                objetos_temp[obj_num] = {
-                    "Estado": "En cola mesa",
-                    "Hora_inicio_espera": f"{pac.tiempo_inicio_espera:.3f}" if pac.tiempo_inicio_espera is not None else ""
-                }
-                obj_num += 1
+            objetos_temporales.append({
+                'id': pac.id,
+                'estado': 'En cola mesa',
+                'hora_inicio': pac.tiempo_inicio_espera
+            })
         
-        # Paciente en atención
-        if paciente_en_atencion and obj_num <= 4:
-            objetos_temp[obj_num] = {
-                "Estado": "En atención mesa",
-                "Hora_inicio_espera": ""
-            }
-            obj_num += 1
+        # Paciente en atención mesa
+        if paciente_en_atencion:
+            objetos_temporales.append({
+                'id': paciente_en_atencion.id,
+                'estado': 'En atención mesa',
+                'hora_inicio': None
+            })
         
-        # Pacientes en cola cooperadora
+        # Pacientes en cola pago
         for pac in cola_pago:
-            if obj_num <= 4:
-                objetos_temp[obj_num] = {
-                    "Estado": "En cola cooperadora",
-                    "Hora_inicio_espera": ""
-                }
-                obj_num += 1
+            objetos_temporales.append({
+                'id': pac.id,
+                'estado': 'En cola cooperadora',
+                'hora_inicio': None
+            })
         
         # Paciente en pago
-        if paciente_en_pago and obj_num <= 4:
-            objetos_temp[obj_num] = {
-                "Estado": "En pago cooperadora",
-                "Hora_inicio_espera": ""
-            }
-            obj_num += 1
+        if paciente_en_pago:
+            objetos_temporales.append({
+                'id': paciente_en_pago.id,
+                'estado': 'En pago cooperadora',
+                'hora_inicio': None
+            })
         
-        # Pacientes en cola retorno
+        # Pacientes esperando retorno
         for pac in cola_retorno:
-            if obj_num <= 4:
-                objetos_temp[obj_num] = {
-                    "Estado": "Esperando retorno",
-                    "Hora_inicio_espera": ""
-                }
-                obj_num += 1
-        
-        # Completar con objetos vacíos hasta 4
-        for i in range(obj_num, 5):
-            objetos_temp[i] = {
-                "Estado": "",
-                "Hora_inicio_espera": ""
-            }
+            objetos_temporales.append({
+                'id': pac.id,
+                'estado': 'Esperando retorno',
+                'hora_inicio': None
+            })
 
-        # ESTRUCTURA CON MULTIINDEX MEJORADO
-        row = {
-            # Columnas simples
-            "Evento": evento,
-            "Reloj": round(reloj, 3),
-            "RND_llegada_paciente": extra.get("rnd_llegada", "") if extra else "",
-            "Tiempo_entre_llegadas": extra.get("tiempo_entre", "") if extra else "",
-            "Proxima_llegada": prox_llegada_str,
-            "RND_obra_social": extra.get("rnd_obra_social", "") if extra else "",
-            "Obra_Social": extra.get("obra_social", "") if extra else "",
-            "fin_atencion": fin_atencion_str,
-            "fin_informe_obra_social": "",  # Constante 0.1667
-            "RND_abono_consulta": extra.get("rnd_pago", "") if extra else "",
-            "Tiempo_de_abono_consulta": extra.get("tiempo_pago", "") if extra else "",
-            "fin_abono_consulta": fin_pago_str,
-            "Proxima_llegada_llamada": prox_llamada_str,
-            "RND_llamada": extra.get("rnd_llamada", "") if extra else "",
-            "Tiempo_de_llamada": extra.get("tiempo_llamada", "") if extra else "",
-            "fin_llamada": fin_llamada_str,
-            
-            # Servidores (MultiIndex nivel 2)
-            ("Mesa de Turnos", "Estado"): estado_mesa,
-            ("Mesa de Turnos", "Cola"): str(cola_mesa_ids) if cola_mesa_ids else "",
-            ("Cooperadora", "Estado"): estado_coop,
-            ("Cooperadora", "Cola"): str(cola_pago_ids) if cola_pago_ids else "",
-            ("Línea Telefónica", "Estado"): estado_linea,
-            ("Línea Telefónica", "Cola"): "",
-            
-            # Estadísticas
-            "Llamadas_perdidas": llamadas_perdidas,
-            "Acum_tiempo_espera": round(espera_total, 3),
-            "Cantidad_personas_esperaron": cnt_esperas,
-            
-            # Objetos temporales (MultiIndex nivel 3)
-            ("Paciente 1", "Estado"): objetos_temp[1]["Estado"],
-            ("Paciente 1", "Hora Inicio Espera"): objetos_temp[1]["Hora_inicio_espera"],
-            ("Paciente 2", "Estado"): objetos_temp[2]["Estado"],
-            ("Paciente 2", "Hora Inicio Espera"): objetos_temp[2]["Hora_inicio_espera"],
-            ("Paciente 3", "Estado"): objetos_temp[3]["Estado"],
-            ("Paciente 3", "Hora Inicio Espera"): objetos_temp[3]["Hora_inicio_espera"],
-            ("Paciente 4", "Estado"): objetos_temp[4]["Estado"],
-            ("Paciente 4", "Hora Inicio Espera"): objetos_temp[4]["Hora_inicio_espera"]
+        # Crear fila base
+        row_data = {
+            'Evento': evento,
+            'Reloj': formatear_valor(reloj),
+            'RND_llegada_paciente': formatear_valor(extra.get('rnd_llegada', '')) if extra else '',
+            'Tiempo_entre_llegadas': formatear_valor(extra.get('tiempo_entre', '')) if extra else '',
+            'Proxima_llegada': formatear_valor(prox_llegada_pac),
+            'RND_obra_social': formatear_valor(extra.get('rnd_obra_social', '')) if extra else '',
+            'Obra_Social': extra.get('obra_social', '') if extra else '',
+            'fin_informe_obra_social': formatear_valor(tiempo_informe) if evento == 'Inicializacion' else '',
+            'fin_abono_consulta': formatear_valor(fin_pago),
+            'Proxima_llegada_llamada': formatear_valor(prox_llamada),
+            'fin_llamada': formatear_valor(fin_llamada),
+            'RND_abono_consulta': formatear_valor(extra.get('rnd_pago', '')) if extra else '',
+            'Tiempo_de_abono_de_consulta': formatear_valor(extra.get('tiempo_pago', '')) if extra else '',
+            'RND_llamada': formatear_valor(extra.get('rnd_llamada', '')) if extra else '',
+            'Tiempo_de_llamada': formatear_valor(extra.get('tiempo_llamada', '')) if extra else '',
         }
+
+        # Agregar servidores
+        row_data[('Empleado mesa de turno', 'Estado')] = 'Ocupado' if mesa_ocupada else 'Libre'
+        row_data[('Empleado mesa de turno', 'Cola')] = str([p.id for p in cola_mesa]) if cola_mesa else ''
         
-        filas.append(row)
+        row_data[('Empleado cooperadora', 'Estado')] = 'Ocupado' if coop_ocupada else 'Libre' 
+        row_data[('Empleado cooperadora', 'Cola')] = str([p.id for p in cola_pago]) if cola_pago else ''
+        
+        row_data[('Linea telefonica', 'Estado')] = 'Ocupado' if linea_ocupada else 'Libre'
+        row_data[('Linea telefonica', 'Cola')] = ''
+
+        # Estadísticas
+        row_data['Cantidad_de_llamadas_perdidas_por_tener_la_linea_ocupada'] = llamadas_perdidas
+        row_data['Acum_tiempo_de_espera'] = formatear_valor(espera_total)
+        row_data['Cantidad_de_personas_que_esperan'] = cnt_esperas
+
+        # Agregar objetos temporales dinámicamente
+        for i, obj in enumerate(objetos_temporales, 1):
+            row_data[(f'{i}', 'Estado')] = obj['estado']
+            row_data[(f'{i}', 'Hora inicio de espera en cola')] = formatear_valor(obj['hora_inicio']) if obj['hora_inicio'] is not None else ''
+
+        filas.append(row_data)
 
     # Registrar estado inicial
     registrar("Inicializacion")
@@ -267,13 +241,13 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             ("llegada_paciente", prox_llegada_pac),
             ("llegada_llamada", prox_llamada),
             ("fin_atencion", fin_atencion),
-            ("fin_pago", fin_pago),
+            ("fin_abono_consulta", fin_pago),
             ("fin_llamada", fin_llamada),
         ]
         
         evento, momento = min(eventos, key=lambda x: x[1])
         
-        if momento == math.inf:
+        if momento == float('inf'):
             break  # No hay más eventos
         
         # Avanzar reloj
@@ -287,7 +261,7 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             
             # Determinar si tiene obra social
             rnd_os = random.random()
-            tiene_obra = rnd_os >= p_sin_obra  # 55% SIN obra social
+            tiene_obra = rnd_os > p_sin_obra  # 45% SIN obra social
             
             # Crear paciente
             pid = f"P{next(next_id)}"
@@ -296,10 +270,10 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             cola_mesa.append(nuevo_paciente)
             
             extra = {
-                "rnd_llegada": round(rnd_llegada, 3),
-                "tiempo_entre": round(tiempo_entre, 3),
-                "rnd_obra_social": round(rnd_os, 3),
-                "obra_social": "Si" if tiene_obra else "No"
+                "rnd_llegada": rnd_llegada,
+                "tiempo_entre": tiempo_entre,
+                "rnd_obra_social": rnd_os,
+                "obra_social": "Con obra social" if tiene_obra else "Sin obra social"
             }
             registrar("llegada_paciente", extra)
             
@@ -308,31 +282,29 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             prox_llamada = reloj + t_llamada
             
             # Verificar si la línea está disponible
-            if mesa_ocupada or linea_ocupada:
+            if linea_ocupada:
                 llamadas_perdidas += 1
-                registrar("llamada_perdida")
+                registrar("llegada_llamada")
             else:
                 # Iniciar llamada
                 rnd_call, dur_call = gen_uniforme(c1, c2)
                 fin_llamada = reloj + dur_call
                 linea_ocupada = True
-                mesa_ocupada = True  # La mesa también se ocupa por la llamada
                 
                 extra = {
-                    "rnd_llamada": round(rnd_call, 3),
-                    "tiempo_llamada": round(dur_call, 3)
+                    "rnd_llamada": rnd_call,
+                    "tiempo_llamada": dur_call
                 }
-                registrar("inicio_llamada", extra)
+                registrar("llegada_llamada", extra)
                 
         elif evento == "fin_llamada":
             linea_ocupada = False
-            mesa_ocupada = False
-            fin_llamada = math.inf
+            fin_llamada = float('inf')
             registrar("fin_llamada")
             
         elif evento == "fin_atencion":
             mesa_ocupada = False
-            fin_atencion = math.inf
+            fin_atencion = float('inf')
             
             # El paciente actual termina su atención
             if paciente_en_atencion:
@@ -344,24 +316,22 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
                 
             registrar("fin_atencion")
             
-        elif evento == "fin_pago":
+        elif evento == "fin_abono_consulta":
             coop_ocupada = False
-            fin_pago = math.inf
+            fin_pago = float('inf')
             
             # El paciente vuelve a mesa de turnos sin hacer cola
             if paciente_en_pago:
                 cola_retorno.append(paciente_en_pago)
                 paciente_en_pago = None
                 
-            registrar("fin_pago")
+            registrar("fin_abono_consulta")
         
         # ── Despachar nuevos servicios ──────────────────────────
         
-        # Atender en mesa de turnos (prioridad: retorno > cola normal)
+        # Atender en mesa de turnos (prioridad: llamadas > retorno > cola normal)
         if not mesa_ocupada and not linea_ocupada:
             paciente_a_atender = None
-            rnd_att = 0
-            t_att = 0
             
             if cola_retorno:
                 paciente_a_atender = cola_retorno.pop(0)
@@ -369,10 +339,10 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             elif cola_mesa:
                 paciente_a_atender = cola_mesa.pop(0)
                 # Calcular tiempo de espera
-                tiempo_espera = reloj - paciente_a_atender.tiempo_inicio_espera
-                espera_total += tiempo_espera
-                cnt_esperas += 1
-                paciente_a_atender.veces_esperado += 1
+                if paciente_a_atender.tiempo_inicio_espera is not None:
+                    tiempo_espera = reloj - paciente_a_atender.tiempo_inicio_espera
+                    espera_total += tiempo_espera
+                    cnt_esperas += 1
             
             if paciente_a_atender:
                 mesa_ocupada = True
@@ -383,15 +353,8 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
                     rnd_att, t_att = gen_uniforme(a1, b1)
                     fin_atencion = reloj + t_att
                 else:
-                    # Solo informar (10 segundos)
+                    # Solo informar (tiempo_informe)
                     fin_atencion = reloj + tiempo_informe
-                    t_att = tiempo_informe
-                    
-                extra = {
-                    "rnd_atencion": round(rnd_att, 3),
-                    "tiempo_atencion": round(t_att, 3)
-                }
-                registrar("inicio_atencion", extra)
         
         # Atender en cooperadora
         if not coop_ocupada and cola_pago:
@@ -400,55 +363,74 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             
             rnd_pago, t_pago = gen_uniforme(a2, b2)
             fin_pago = reloj + t_pago
-            
-            extra = {
-                "rnd_pago": round(rnd_pago, 3),
-                "tiempo_pago": round(t_pago, 3)
-            }
-            registrar("inicio_pago", extra)
 
-    # ── Fin simulación ──
+    # ── Crear DataFrame con MultiIndex ──
     df = pd.DataFrame(filas)
     
-    # Crear MultiIndex mejorado
-    # Separar columnas por tipo
-    columnas_simples = []
-    columnas_servidores = []
-    columnas_pacientes = []
-    
+    # Obtener todas las columnas únicas para objetos temporales
+    objetos_cols = []
     for col in df.columns:
-        if isinstance(col, tuple):
-            if col[0] in ["Mesa de Turnos", "Cooperadora", "Línea Telefónica"]:
-                columnas_servidores.append(col)
-            elif col[0].startswith("Paciente"):
-                columnas_pacientes.append(col)
-        else:
-            columnas_simples.append(col)
+        if isinstance(col, tuple) and col[0].isdigit():
+            objetos_cols.append(col)
     
-    # Reordenar columnas: simples + servidores + pacientes
-    columnas_ordenadas = columnas_simples + columnas_servidores + columnas_pacientes
-    df = df[columnas_ordenadas]
-    
-    # Crear multiíndice
+    # Crear estructura de columnas para MultiIndex
     nuevas_columnas = []
-    for col in df.columns:
-        if isinstance(col, tuple):
-            if col[0] in ["Mesa de Turnos", "Cooperadora", "Línea Telefónica"]:
-                # Servidores: ("Servidores", "Mesa de Turnos", "Estado")
-                nuevas_columnas.append(("Servidores", col[0], col[1]))
-            elif col[0].startswith("Paciente"):
-                # Pacientes: ("Pacientes", "Paciente 1", "Estado")
-                nuevas_columnas.append(("Pacientes", col[0], col[1]))
-        else:
-            # Columnas simples: ("Variables", "", "Evento")
-            nuevas_columnas.append(("Variables", "", col))
     
-    # Aplicar multiíndice
-    df.columns = pd.MultiIndex.from_tuples(nuevas_columnas)
+    # Columnas principales (nivel simple)
+    columnas_principales = [
+        'Evento', 'Reloj', 'RND_llegada_paciente', 'Tiempo_entre_llegadas', 
+        'Proxima_llegada', 'RND_obra_social', 'Obra_Social', 
+        'fin_informe_obra_social', 'fin_abono_consulta', 'Proxima_llegada_llamada',
+        'fin_llamada', 'RND_abono_consulta', 'Tiempo_de_abono_de_consulta',
+        'RND_llamada', 'Tiempo_de_llamada'
+    ]
+    
+    for col in columnas_principales:
+        if col in df.columns:
+            nuevas_columnas.append(('', '', col))
+    
+    # Objetos permanentes (servidores)
+    servidores = [
+        ('Empleado mesa de turno', 'Estado'),
+        ('Empleado mesa de turno', 'Cola'),
+        ('Empleado cooperadora', 'Estado'), 
+        ('Empleado cooperadora', 'Cola'),
+        ('Linea telefonica', 'Estado'),
+        ('Linea telefonica', 'Cola')
+    ]
+    
+    for servidor in servidores:
+        if servidor in df.columns:
+            nuevas_columnas.append(('Objetos permanentes', servidor[0], servidor[1]))
+    
+    # Estadísticas
+    estadisticas = [
+        'Cantidad_de_llamadas_perdidas_por_tener_la_linea_ocupada',
+        'Acum_tiempo_de_espera', 
+        'Cantidad_de_personas_que_esperan'
+    ]
+    
+    for est in estadisticas:
+        if est in df.columns:
+            nuevas_columnas.append(('Estadisticas', '', est))
+    
+    # Objetos temporales
+    for col in sorted(objetos_cols, key=lambda x: int(x[0])):
+        nuevas_columnas.append(('Objetos temporales', col[0], col[1]))
+    
+    # Reordenar DataFrame según nuevas columnas
+    columnas_existentes = [col for col in [orig for _, _, orig in nuevas_columnas if not isinstance(orig, tuple)] + 
+                          [orig for orig in df.columns if isinstance(orig, tuple)] 
+                          if col in df.columns]
+    
+    df_ordenado = df[columnas_existentes]
+    
+    # Aplicar MultiIndex
+    df_ordenado.columns = pd.MultiIndex.from_tuples(nuevas_columnas)
     
     prom_espera = espera_total / cnt_esperas if cnt_esperas else 0.0
 
-    return df, prom_espera, llamadas_perdidas
+    return df_ordenado, prom_espera, llamadas_perdidas
 
 # -----------------------------------------------------------
 # 5) Ejecución interactiva
