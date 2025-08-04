@@ -15,6 +15,12 @@ Estadísticas a calcular:
 A) Cantidad de llamadas perdidas por tener la línea ocupada
 B) Determinar tiempo promedio de espera en cola
 
+CORRECCIONES IMPLEMENTADAS:
+- Condiciones iniciales correctas con objetos temporales dinámicos
+- Cálculo de eventos mejorado
+- Mostrar RNDs en todos los cálculos
+- Mesa de turnos atiende llamadas con prioridad
+- Objetos temporales se actualizan correctamente en cada evento
 """
 
 import random
