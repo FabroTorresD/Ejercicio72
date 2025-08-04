@@ -32,7 +32,7 @@ st.sidebar.markdown("**Parámetros básicos**")
 media_llegada      = st.sidebar.number_input("Media entre llegadas de pacientes (min)", 0.5, 30.0, 3.0)
 a1, b1             = st.sidebar.slider("Atención mesa de turnos (min)", 0.5, 10.0, (1.0, 3.0))
 p_sin_obra         = st.sidebar.slider("Proporción SIN obra social", 0.0, 1.0, 0.45, 0.05)  # 45% sin obra social
-tiempo_informe     = st.sidebar.number_input("Tiempo informe obra social (min)", 0.1, 1.0, 0.1667)
+tiempo_informe     = st.sidebar.number_input("Tiempo informe obra social (min)", 0.1, 1.0, 0.1667) 
 a2, b2             = st.sidebar.slider("Abono cooperadora (min)", 0.1, 10.0, (0.8, 2.4))
 
 st.sidebar.markdown("**Llamadas telefónicas**")
