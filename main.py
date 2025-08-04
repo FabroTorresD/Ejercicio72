@@ -70,10 +70,10 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
 
     # Generar primera llegada de paciente
     rnd_llegada, tiempo_entre = gen_exponencial(media_llegada)
-    prox_llegada_pac: float = tiempo_entre
+    prox_llegada_pac: float = reloj + tiempo_entre  # CORREGIDO: desde reloj actual
 
     # Programar primera llamada
-    prox_llegada_llamada: float = falta_llamada
+    prox_llegada_llamada: float = falta_llamada  # Correcto: faltan X minutos
     fin_llamada: float = float('inf')
 
     # Eventos de atención
@@ -103,7 +103,7 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
     # Inicializar con 2 pacientes esperando pagar consulta
     for i in range(ini_coop):
         pac = Paciente(f"CP{i+1}", False, 0.0)
-        pac.primera_vez = False
+        pac.primera_vez = False  # Ya pasaron por mesa antes
         cola_cooperadora.append(pac)
 
     # Estados de servidores
@@ -111,13 +111,13 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
     cooperadora_ocupada: bool = False
     linea_ocupada: bool = False
 
-    # Si hay alguien en cooperadora al inicio, arranca el servicio
+    # Si hay alguien en cooperadora al inicio, arranca el servicio inmediatamente
     paciente_en_abono = None
     if cola_cooperadora:
         cooperadora_ocupada = True
         paciente_en_abono = cola_cooperadora.pop(0)
         rnd_abono, tiempo_abono = gen_uniforme(a2, b2)
-        fin_abono_consulta = tiempo_abono
+        fin_abono_consulta = reloj + tiempo_abono  # Desde tiempo 0
         rnd_abono_actual = rnd_abono
         t_abono_actual = tiempo_abono
 
@@ -223,7 +223,14 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
 
         filas.append(row_data)
 
-    # Estado inicial
+    # Estado inicial - Con debug de pacientes iniciales
+    # Debug para verificar estado inicial
+    print(f"DEBUG INICIAL: Mesa={len(cola_mesa)}, Cooperadora={len(cola_cooperadora)}, Total={len(cola_mesa)+len(cola_cooperadora)}")
+    print(f"DEBUG: Próxima llegada en: {prox_llegada_pac:.3f}")
+    print(f"DEBUG: Próxima llamada en: {prox_llegada_llamada:.3f}")
+    if paciente_en_abono:
+        print(f"DEBUG: Cooperadora ocupada hasta: {fin_abono_consulta:.3f}")
+    
     registrar("Inicializacion")
 
     # ── Motor de eventos discretos ──────────────────────────
@@ -241,16 +248,24 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             break
         reloj = momento
 
+        # Debug: mostrar el evento que se está procesando
+        print(f"DEBUG: Reloj={reloj:.3f}, Evento={evento}, Próxima llegada={prox_llegada_pac:.3f}")
+
         # ── Procesar evento ──────────────────────────────────
         if evento == "llegada_paciente":
+            # Generar PRÓXIMA llegada ANTES de procesar la actual
             rnd_llegada, tiempo_entre = gen_exponencial(media_llegada)
             prox_llegada_pac = reloj + tiempo_entre
+            
+            # Procesar llegada actual
             rnd_os = random.random()
             tiene_obra = rnd_os >= p_sin_obra
             pid = f"P{next(next_id)}"
             nuevo_paciente = Paciente(pid, tiene_obra, reloj)
             nuevo_paciente.tiempo_inicio_espera = reloj
             cola_mesa.append(nuevo_paciente)
+            
+            print(f"DEBUG: Llegó {pid}, próxima llegada en {prox_llegada_pac:.3f}")
 
             extra = {
                 "rnd_llegada": rnd_llegada,
@@ -296,15 +311,17 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             mesa_ocupada = False
             fin_atencion = float('inf')
             if paciente_en_atencion:
-                if not paciente_en_atencion.tiene_obra_social and paciente_en_atencion.primera_vez:
-                    cola_cooperadora.append(paciente_en_atencion)
+                # El paciente abandona el sistema después de atención completa
                 paciente_en_atencion = None
+            rnd_att_actual = None
+            t_att_actual = None
             registrar("fin_atencion")
 
         elif evento == "fin_informe_obra_social":
             mesa_ocupada = False
             fin_informe_obra_social = float('inf')
             if paciente_en_atencion:
+                # El paciente va a cooperadora después del informe
                 cola_cooperadora.append(paciente_en_atencion)
                 paciente_en_atencion = None
             registrar("fin_informe_obra_social")
@@ -332,9 +349,16 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
                     fin_atencion = reloj + t_att
                     rnd_att_actual = rnd_att
                     t_att_actual = t_att
+                    
+                    extra_inicio = {
+                        "rnd_tiempo_atencion": rnd_att,
+                        "tiempo_atencion": t_att
+                    }
+                    registrar("inicio_atencion", extra_inicio)
                 else:
                     # Solo informe
                     fin_informe_obra_social = reloj + tiempo_informe
+                    registrar("inicio_informe")
 
         # ── Lógica de cooperadora ──
         if not cooperadora_ocupada and cola_cooperadora:
@@ -344,6 +368,12 @@ def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float
             fin_abono_consulta = reloj + tiempo_abono
             rnd_abono_actual = rnd_abono
             t_abono_actual = tiempo_abono
+            
+            extra_cooperadora = {
+                "rnd_abono_consulta": rnd_abono,
+                "tiempo_abono_consulta": tiempo_abono
+            }
+            registrar("inicio_abono_consulta", extra_cooperadora)
 
     # ── Construcción de DataFrame ──
     df = pd.DataFrame(filas)
