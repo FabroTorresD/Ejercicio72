@@ -66,7 +66,7 @@ def simular_centro_salud(
     a1: float = 1.0, b1: float = 3.0,  # Mesa de turnos
     a2: float = 0.8, b2: float = 2.4,  # Cooperadora
     p_sin_obra: float = 0.45,  # 45% sin obra social
-    tiempo_informe: float = 10/60,  # 10 segundos = 0.1667 min
+    tiempo_informe: float = 0.1667,  # 10 segundos = 0.1667 min
     intervalo_llamadas: float = 3.0,
     c1: float = 0.5, c2: float = 1.5,  # Duración llamadas
     ini_pacientes_mesa: int = 4,
@@ -551,21 +551,57 @@ def main():
     # Sidebar con parámetros
     st.sidebar.markdown("## ⚙️ Parámetros de Simulación")
     
+    
     # Parámetros básicos
     media_llegada = st.sidebar.number_input("Media entre llegadas (min)", 0.5, 10.0, 3.0, 0.1)
+    st.sidebar.divider()
     
+   # En el sidebar, cada llamada a .columns() crea una nueva fila de 2 columnas
+    # Mesa de turnos
     col1, col2 = st.sidebar.columns(2)
-    with col1:
-        a1 = st.sidebar.number_input("Mesa - Mín (min)", 0.1, 5.0, 1.0, 0.1)
-        a2 = st.sidebar.number_input("Coop - Mín (min)", 0.1, 5.0, 0.8, 0.1)
-        c1 = st.sidebar.number_input("Llamada - Mín (min)", 0.1, 3.0, 0.5, 0.1)
-    with col2:
-        b1 = st.sidebar.number_input("Mesa - Máx (min)", 0.1, 5.0, 3.0, 0.1)
-        b2 = st.sidebar.number_input("Coop - Máx (min)", 0.1, 5.0, 2.4, 0.1)
-        c2 = st.sidebar.number_input("Llamada - Máx (min)", 0.1, 3.0, 1.5, 0.1)
-    
-    p_sin_obra = st.sidebar.slider("% Sin obra social", 0.0, 1.0, 0.45, 0.05)
+    a1 = col1.number_input(
+        "Tiempo de atención mesa de turno – Mín (min)",
+        min_value=0.1, max_value=5.0, value=1.0, step=0.1
+    )
+    b1 = col2.number_input(
+        "Tiempo de atención mesa de turno – Máx (min)",
+        min_value=0.1, max_value=5.0, value=3.0, step=0.1
+    )
+    st.sidebar.divider()
+    # Cooperadora``
+    coop_col1, coop_col2 = st.sidebar.columns(2)
+    a2 = coop_col1.number_input(
+        "Tiempo de atención cooperadora – Mín (min)",
+        min_value=0.1, max_value=5.0, value=0.8, step=0.1
+    )
+    b2 = coop_col2.number_input(
+        "Tiempo de atención cooperadora – Máx (min)",
+        min_value=0.1, max_value=5.0, value=2.4, step=0.1
+    )
+    st.sidebar.divider()
+
+    # Llamadas
+    llamada_col1, llamada_col2 = st.sidebar.columns(2)
+    c1 = llamada_col1.number_input(
+        "Duración de llamada – Mín (min)",
+        min_value=0.1, max_value=3.0, value=0.5, step=0.1
+    )
+    c2 = llamada_col2.number_input(
+        "Duración de llamada – Máx (min)",
+        min_value=0.1, max_value=3.0, value=1.5, step=0.1
+    )
+    st.sidebar.divider()
+
+    tiempoInforme = st.sidebar.number_input(
+        "Tiempo informar sobre obra social (min)",
+        min_value=0.01, max_value=2.0, value=0.1667, step=0.0001, format="%.4f"
+    )
+    st.sidebar.divider()
+
+    p_sin_obra = st.sidebar.slider("% Proporcion sin obra social", 0.0, 1.0, 0.45, 0.05)
+    st.sidebar.divider()
     intervalo_llamadas = st.sidebar.number_input("Intervalo llamadas (min)", 1.0, 10.0, 3.0, 0.1)
+    st.sidebar.divider()
     
     # Condiciones iniciales
     st.sidebar.markdown("### 🎯 Condiciones Iniciales")
@@ -586,6 +622,7 @@ def main():
                 p_sin_obra=p_sin_obra,
                 intervalo_llamadas=intervalo_llamadas,
                 c1=c1, c2=c2,
+                tiempo_informe=tiempoInforme,
                 ini_pacientes_mesa=ini_mesa,
                 ini_pacientes_coop=ini_coop,
                 minutos_proxima_llamada=min_llamada,
