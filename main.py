@@ -1,26 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Simulador discreto – Centro de Salud (Ejercicio 72) - FORMATO FINAL CORREGIDO
+Simulador discreto – Ejercicio 72
 ------------------------------------------------------------------
-• Paciente → llega con distribución Exponencial(µ = 3 min)
-• Mesa de turnos (servidor 1) → Uniforme(1,3 min)
-    – Al paciente SIN obra social le informa (0.1667 min = 10 seg) y lo envía a Cooperadora
-• Cooperadora (servidor 2) → Uniforme(0.8, 2.4 min)
-    – Al terminar vuelve a Mesa de turnos (sin volver a la cola original)
-• Llamadas → arriban cada 3 minutos (constante)
-    – Duración Uniforme(0.5, 1.5 min)
-    – Si la línea está ocupada la llamada se pierde
-
-Estadísticas a calcular:
-A) Cantidad de llamadas perdidas por tener la línea ocupada
-B) Determinar tiempo promedio de espera en cola
-
-CORRECCIONES IMPLEMENTADAS:
-- Condiciones iniciales correctas con objetos temporales dinámicos
-- Cálculo de eventos mejorado
-- Mostrar RNDs en todos los cálculos
-- Mesa de turnos atiende llamadas con prioridad
-- Objetos temporales se actualizan correctamente en cada evento
 """
 
 import random
@@ -34,505 +15,626 @@ import numpy as np
 # -----------------------------------------------------------
 
 def gen_exponencial(media: float) -> tuple[float, float]:
+    """Genera variable aleatoria exponencial negativa"""
     u = random.random()
     intervalo = -media * np.log(1 - u)
     return u, intervalo
 
 def gen_uniforme(a: float, b: float) -> tuple[float, float]:
+    """Genera variable aleatoria uniforme"""
     u = random.random()
     valor = a + (b - a) * u
     return u, valor
 
 # -----------------------------------------------------------
-# 2) Definición de la clase Paciente
+# 2) Clase Paciente
 # -----------------------------------------------------------
 
 class Paciente:
-    def __init__(self, id: str, tiene_obra_social: bool, t_llegada: float):
+    def __init__(self, id: str, reloj_llegada: float):
         self.id = id
+        self.tiene_obra_social = None  
+        self.tiempo_inicio_espera = reloj_llegada
+        self.primera_vez = True
+        self.vuelve_de_cooperadora = False
+        self.estado_actual = None
+        
+    def set_obra_social(self, tiene_obra_social: bool):
         self.tiene_obra_social = tiene_obra_social
-        self.tiempo_inicio_espera = t_llegada
-        self.primera_vez = True  # para identificar si ya pasó por cooperadora
-        self.vuelve_de_cooperadora = False  # para marcar los que vuelven
+        
+    def marcar_retorno_cooperadora(self):
+        self.primera_vez = False
+        self.vuelve_de_cooperadora = True
+        # IMPORTANTE: Al volver de cooperadora, resetear tiempo de espera
+        # porque ahora esperará para ser atendido nuevamente
 
 # -----------------------------------------------------------
-# 3) Estados de los pacientes según el documento
-# -----------------------------------------------------------
-# esperandoAtencionMesaTurno (EAMT)
-# siendoAtendidoMesaTurno(SAMT) 
-# esperandoAtencionCooperadora (EAC)
-# abonandoCooperadora (AC)
-
-# -----------------------------------------------------------
-# 4) Simulación CORREGIDA
+# 3) Simulación del centro de salud
 # -----------------------------------------------------------
 
-def simular_dia(media_llegada: float, a1: float, b1: float, a2: float, b2: float,
-                p_sin_obra: float, tiempo_informe: float, t_llamada: float, c1: float, c2: float,
-                ini_mesa: int, ini_coop: int, falta_llamada: float, t_limite: float):
-    """Devuelve df, tiempo_promedio_espera, llamadas_perdidas"""
-
-    # ── Variables reloj y eventos ────────────────────────────
-    reloj: float = 0.0
-
-    # Generar primera llegada de paciente (sin mostrar RND inicial)
-    _, tiempo_entre = gen_exponencial(media_llegada)
-    prox_llegada_pac: float = reloj + tiempo_entre
-
-    # Programar primera llamada
-    prox_llegada_llamada: float = falta_llamada  # Correcto: faltan X minutos
-    fin_llamada: float = float('inf')
-
-    # Eventos de atención
-    fin_atencion: float = float('inf')
-    fin_informe_obra_social: float = float('inf') 
-    fin_abono_consulta: float = float('inf')
-
-    # ── Variables para rastrear RNDs utilizados ──
-    rnd_att_actual: float | None = None
-    t_att_actual: float | None = None
-    rnd_abono_actual: float | None = None
-    t_abono_actual: float | None = None
-    rnd_llamada_actual: float | None = None
-    t_llamada_actual: float | None = None
-
-    # ── Colas & servidores según documento ──
-    cola_mesa: list[Paciente] = []           # EAMT - esperandoAtencionMesaTurno
-    cola_retorno: list[Paciente] = []        # Pacientes que vuelven de cooperadora (prioridad)
-    cola_cooperadora: list[Paciente] = []    # EAC - esperandoAtencionCooperadora
-
-    # CORRECCIÓN: Inicializar condiciones iniciales correctamente
-    # Inicializar con pacientes esperando para sacar turno (sin obra social definida aún)
-    for i in range(ini_mesa):
-        pac = Paciente(f"P{i+1}", True, 0.0)  # Obra social se define al ser atendido
-        pac.tiempo_inicio_espera = 0.0
-        cola_mesa.append(pac)
-
-    # Inicializar con pacientes esperando pagar consulta
-    for i in range(ini_coop):
-        pac = Paciente(f"CP{i+1}", False, 0.0)  # Sin obra social porque van a cooperadora
-        pac.primera_vez = False  # Ya pasaron por mesa antes
-        pac.vuelve_de_cooperadora = False  # Están pagando, no vuelven aún
-        cola_cooperadora.append(pac)
-
+def simular_centro_salud(
+    media_llegada: float = 3.0,
+    a1: float = 1.0, b1: float = 3.0,  # Mesa de turnos
+    a2: float = 0.8, b2: float = 2.4,  # Cooperadora
+    p_sin_obra: float = 0.45,  # 45% sin obra social
+    tiempo_informe: float = 10/60,  # 10 segundos = 0.1667 min
+    intervalo_llamadas: float = 3.0,
+    c1: float = 0.5, c2: float = 1.5,  # Duración llamadas
+    ini_pacientes_mesa: int = 4,
+    ini_pacientes_coop: int = 2,
+    minutos_proxima_llamada: float = 2.0,
+    tiempo_simulacion: float = 60.0
+):
+    """Simulación del centro de salud"""
+    
+    # INICIALIZACIÓN
+    reloj = 0.0
+    contador_pacientes = count(start=1)
+    contador_cooperadora = count(start=1)
+    
+    # Eventos programados
+    rnd_primera_llegada, tiempo_primera_llegada = gen_exponencial(media_llegada)
+    prox_llegada_paciente = reloj + tiempo_primera_llegada
+    prox_llegada_llamada = minutos_proxima_llamada
+    fin_atencion = float('inf')
+    fin_informe_obra_social = float('inf')
+    fin_abono_consulta = float('inf')
+    fin_llamada = float('inf')
+    
     # Estados de servidores
-    mesa_ocupada: bool = False
-    cooperadora_ocupada: bool = False
-    linea_ocupada: bool = False
-
-    # CORRECCIÓN: Si hay alguien en cooperadora al inicio, arranca el servicio
-    paciente_en_abono = None
-    if cola_cooperadora:
-        cooperadora_ocupada = True
-        paciente_en_abono = cola_cooperadora.pop(0)
-        rnd_abono, tiempo_abono = gen_uniforme(a2, b2)
-        fin_abono_consulta = reloj + tiempo_abono
-        rnd_abono_actual = rnd_abono
-        t_abono_actual = tiempo_abono
-
+    mesa_libre = True
+    cooperadora_libre = True
+    atendiendo_llamada = False  # NUEVO: Estado específico para llamadas
+    
+    # Colas del sistema
+    cola_mesa_normal = []
+    cola_mesa_retorno = []
+    cola_cooperadora = []
+    
+    # Pacientes siendo atendidos
+    paciente_en_mesa = None
+    paciente_en_cooperadora = None
+    
+    # Variables para tracking de RNDs
+    ultimo_rnd_llegada = rnd_primera_llegada
+    ultimo_tiempo_entre_llegadas = tiempo_primera_llegada
+    ultimo_rnd_obra_social = None
+    ultimo_obra_social_str = ""
+    ultimo_rnd_atencion = None
+    ultimo_tiempo_atencion = None
+    ultimo_rnd_abono = None
+    ultimo_tiempo_abono = None
+    ultimo_rnd_llamada = None
+    ultimo_tiempo_llamada = None
+    
+    # CONDICIONES INICIALES CORREGIDAS
+    
+    # 4 pacientes esperando para sacar turno
+    # CORRECCIÓN: El primero debe pasar INMEDIATAMENTE a ser atendido
+    pacientes_iniciales = []
+    for i in range(ini_pacientes_mesa):
+        pac = Paciente(f"P{next(contador_pacientes)}", 0.0)
+        pacientes_iniciales.append(pac)
+    
+    # El primer paciente pasa INMEDIATAMENTE a ser atendido
+    if pacientes_iniciales:
+        primer_paciente = pacientes_iniciales.pop(0)
+        primer_paciente.estado_actual = 'SAMT'
+        paciente_en_mesa = primer_paciente
+        mesa_libre = False
+        
+        # Calcular obra social y tiempo de atención inmediatamente
+        ultimo_rnd_obra_social = random.random()
+        tiene_obra_social = ultimo_rnd_obra_social >= p_sin_obra
+        primer_paciente.set_obra_social(tiene_obra_social)
+        ultimo_obra_social_str = "Con obra social" if tiene_obra_social else "Sin obra social"
+        
+        if tiene_obra_social:
+            ultimo_rnd_atencion, ultimo_tiempo_atencion = gen_uniforme(a1, b1)
+            fin_atencion = reloj + ultimo_tiempo_atencion
+        else:
+            fin_informe_obra_social = reloj + tiempo_informe
+    
+    # Los otros 3 pacientes van a la cola
+    for pac in pacientes_iniciales:
+        pac.estado_actual = 'EAMT'
+        cola_mesa_normal.append(pac)
+    
+    # 2 pacientes esperando pagar consulta
+    pacientes_cooperadora = []
+    for i in range(ini_pacientes_coop):
+        pac = Paciente(f"CP{next(contador_cooperadora)}", 0.0)
+        pac.set_obra_social(False)
+        pac.primera_vez = False
+        pacientes_cooperadora.append(pac)
+    
+    # El primero pasa INMEDIATAMENTE a pagar
+    if pacientes_cooperadora:
+        primer_coop = pacientes_cooperadora.pop(0)
+        primer_coop.estado_actual = 'AC'
+        paciente_en_cooperadora = primer_coop
+        cooperadora_libre = False
+        
+        ultimo_rnd_abono, ultimo_tiempo_abono = gen_uniforme(a2, b2)
+        fin_abono_consulta = reloj + ultimo_tiempo_abono
+    
+    # El otro espera en cola
+    for pac in pacientes_cooperadora:
+        pac.estado_actual = 'EAC'
+        cola_cooperadora.append(pac)
+    
     # Estadísticas
     llamadas_perdidas = 0
-    espera_total = 0.0
-    cnt_esperas = 0
-
-    paciente_en_atencion = None
-    paciente_en_llamada = None  # Para rastrear si hay llamada activa
-    next_id = count(start=100)
-    filas = []
-
-    def formatear_valor(valor):
-        if valor in (float('inf'), float('-inf')):
+    tiempo_espera_acumulado = 0.0
+    cantidad_personas_esperaron = 0
+    pacientes_finalizados = []  # Pacientes que terminaron completamente
+    
+    # Vector de estado
+    vector_estado = []
+    
+    def formatear_numero(num):
+        if num == float('inf') or num == float('-inf'):
             return ""
-        if isinstance(valor, (int, float)):
-            return f"{valor:.3f}"
-        return str(valor)
-
-    def registrar(evento: str, extra: dict = None):
-        # CORRECCIÓN: Recopilar objetos temporales dinámicamente
-        objetos_temporales = []
+        if isinstance(num, (int, float)):
+            return f"{num:.4f}" if num != int(num) else f"{int(num)}"
+        return str(num)
+    
+    def obtener_objetos_temporales():
+        objetos = []
         
-        # Pacientes en cola mesa (EAMT) - primero los de retorno (prioridad)
-        for pac in cola_retorno:
-            objetos_temporales.append({
-                'id': pac.id, 
-                'estado': 'EAMT',  # esperandoAtencionMesaTurno
-                'hora_inicio': None  # Los de retorno no cuentan tiempo de espera
-            })
-            
-        # Luego pacientes normales en cola mesa
-        for pac in cola_mesa:
-            objetos_temporales.append({
-                'id': pac.id, 
-                'estado': 'EAMT',  # esperandoAtencionMesaTurno
-                'hora_inicio': pac.tiempo_inicio_espera
-            })
-            
-        # Paciente siendo atendido en mesa (SAMT)
-        if paciente_en_atencion:
-            objetos_temporales.append({
-                'id': paciente_en_atencion.id,
-                'estado': 'SAMT',  # siendoAtendidoMesaTurno
-                'hora_inicio': None
+        # 1. Paciente siendo atendido en mesa
+        if paciente_en_mesa:
+            objetos.append({
+                'id': paciente_en_mesa.id,
+                'estado': 'SAMT',
+                'hora_inicio_espera': formatear_numero(paciente_en_mesa.tiempo_inicio_espera) if paciente_en_mesa.tiempo_inicio_espera != 0 else ""
             })
         
-        # Pacientes en cola cooperadora (EAC)
+        # 2. Pacientes en cola mesa (retorno tiene prioridad)
+        for pac in cola_mesa_retorno:
+            objetos.append({
+                'id': pac.id,
+                'estado': 'EAMT',
+                'hora_inicio_espera': formatear_numero(pac.tiempo_inicio_espera)
+            })
+            
+        for pac in cola_mesa_normal:
+            objetos.append({
+                'id': pac.id,
+                'estado': 'EAMT', 
+                'hora_inicio_espera': formatear_numero(pac.tiempo_inicio_espera)
+            })
+        
+        # 3. Paciente en cooperadora
+        if paciente_en_cooperadora:
+            objetos.append({
+                'id': paciente_en_cooperadora.id,
+                'estado': 'AC',
+                'hora_inicio_espera': ""
+            })
+            
+        # 4. Pacientes en cola cooperadora
         for pac in cola_cooperadora:
-            objetos_temporales.append({
-                'id': pac.id, 
-                'estado': 'EAC',  # esperandoAtencionCooperadora
-                'hora_inicio': None
+            objetos.append({
+                'id': pac.id,
+                'estado': 'EAC',
+                'hora_inicio_espera': ""
             })
             
-        # Paciente abonando en cooperadora (AC)
-        if paciente_en_abono:
-            objetos_temporales.append({
-                'id': paciente_en_abono.id,
-                'estado': 'AC',   # abonandoCooperadora
-                'hora_inicio': None
-            })
-
-            # CORRECCIÓN: Mostrar RNDs utilizados en cálculos
-            row_data = {
-                'Evento': evento,
-                'Reloj': formatear_valor(reloj),
-                'RND_llegada_paciente': formatear_valor(extra.get('rnd_llegada', '')) if extra else '',
-                'Tiempo_entre_llegadas': formatear_valor(extra.get('tiempo_entre', '')) if extra else '',
-                'Proxima_llegada': formatear_valor(prox_llegada_pac),
-                'RND_obra_social': formatear_valor(extra.get('rnd_obra_social', '')) if extra else '',
-                'Obra_Social': extra.get('obra_social', '') if extra else '',
-                'RND_tiempo_atencion': formatear_valor(rnd_att_actual) if rnd_att_actual is not None else '',
-                'Tiempo_de_atencion': formatear_valor(t_att_actual) if t_att_actual is not None else '',
-                'fin_atencion': formatear_valor(fin_atencion),
-                'fin_informe_obra_social': formatear_valor(fin_informe_obra_social),
-                'RND_abono_consulta': formatear_valor(rnd_abono_actual) if rnd_abono_actual is not None else '',
-                'Tiempo_de_abono_de_consulta': formatear_valor(t_abono_actual) if t_abono_actual is not None else '',
-                'fin_abono_consulta': formatear_valor(fin_abono_consulta),
-                'Proxima_llegada_llamada': formatear_valor(prox_llegada_llamada),
-                'RND_llamada': formatear_valor(rnd_llamada_actual) if rnd_llamada_actual is not None else '',
-                'Tiempo_de_llamada': formatear_valor(t_llamada_actual) if t_llamada_actual is not None else '',
-                'fin_llamada': formatear_valor(fin_llamada),
-                # Estados de servidores
-                'Empleado_mesa_de_turno_Estado': 'Ocupado' if mesa_ocupada else 'Libre',
-                'Empleado_cooperadora_Estado': 'Ocupado' if cooperadora_ocupada else 'Libre', 
-                'Linea_telefonica_Estado': 'Ocupada' if linea_ocupada else 'Libre',
-                # Estadísticas
-                'Cantidad_de_llamadas_perdidas_por_tener_la_linea_ocupada': llamadas_perdidas,
-                'Acum_tiempo_de_espera': formatear_valor(espera_total),
-                'Cantidad_de_personas_que_esperan': cnt_esperas,
-            }
-
-        # CORRECCIÓN: Agregar todos los objetos temporales encontrados (no solo 4)
-        max_objetos = max(4, len(objetos_temporales))  # Al menos 4, pero más si hay más objetos
-        for i in range(max_objetos):
-            if i < len(objetos_temporales):
-                obj = objetos_temporales[i]
-                row_data[f'Objeto_{i+1}_Estado'] = obj['estado']
-                row_data[f'Objeto_{i+1}_Hora_inicio_espera'] = formatear_valor(obj['hora_inicio']) if obj['hora_inicio'] is not None else ''
+        return objetos
+    
+    def registrar_estado(evento: str):
+        objetos = obtener_objetos_temporales()
+        
+        estado_mesa = 'Libre'
+        if atendiendo_llamada:
+            estado_mesa = 'AtendendoLlamada'
+        elif not mesa_libre:
+            estado_mesa = 'Ocupado'
+        
+        # Determinar estado de colas para empleados
+        cola_mesa_count = len(cola_mesa_retorno) + len(cola_mesa_normal)
+        cola_coop_count = len(cola_cooperadora)
+        
+        fila = {
+            'Evento': evento,
+            'Reloj': formatear_numero(reloj),
+            'RND_llegada_paciente': formatear_numero(ultimo_rnd_llegada) if ultimo_rnd_llegada else "",
+            'Tiempo_entre_llegadas': formatear_numero(ultimo_tiempo_entre_llegadas) if ultimo_tiempo_entre_llegadas else "",
+            'Proxima_llegada': formatear_numero(prox_llegada_paciente),
+            'RND_obra_social': formatear_numero(ultimo_rnd_obra_social) if ultimo_rnd_obra_social else "",
+            'Obra_Social': ultimo_obra_social_str,
+            'fin_informe_obra_social': formatear_numero(fin_informe_obra_social),
+            'RND_tiempo_atencion': formatear_numero(ultimo_rnd_atencion) if ultimo_rnd_atencion else "",
+            'Tiempo_de_atencion': formatear_numero(ultimo_tiempo_atencion) if ultimo_tiempo_atencion else "",
+            'fin_atencion': formatear_numero(fin_atencion),
+            'RND_abono_consulta': formatear_numero(ultimo_rnd_abono) if ultimo_rnd_abono else "",
+            'Tiempo_de_abono_de_consulta': formatear_numero(ultimo_tiempo_abono) if ultimo_tiempo_abono else "",
+            'fin_abono_consulta': formatear_numero(fin_abono_consulta),
+            'Proxima_llegada_llamada': formatear_numero(prox_llegada_llamada),
+            'RND_llamada': formatear_numero(ultimo_rnd_llamada) if ultimo_rnd_llamada else "",
+            'Tiempo_de_llamada': formatear_numero(ultimo_tiempo_llamada) if ultimo_tiempo_llamada else "",
+            'fin_llamada': formatear_numero(fin_llamada),
+            
+            # Objetos permanentes con multi-índice
+            'Empleado_mesa_estado': estado_mesa,
+            'Empleado_mesa_cola': cola_mesa_count,
+            'Empleado_cooperadora_estado': 'Libre' if cooperadora_libre else 'Ocupado',
+            'Empleado_cooperadora_cola': cola_coop_count,
+            
+            'Cantidad_de_llamadas_perdidas_por_tener_la_linea_ocupada': llamadas_perdidas,
+            'Acum_tiempo_de_espera': formatear_numero(tiempo_espera_acumulado),
+            'Cantidad_de_personas_que_esperan': cantidad_personas_esperaron
+        }
+        
+        # Agregar objetos temporales
+        for i, obj in enumerate(objetos):
+            fila[f'Objeto_{i+1}_Estado'] = obj['estado']
+            fila[f'Objeto_{i+1}_Hora_inicio_espera'] = obj['hora_inicio_espera']
+        
+        # Completar columnas vacías
+        for i in range(len(objetos), 10):
+            fila[f'Objeto_{i+1}_Estado'] = ""
+            fila[f'Objeto_{i+1}_Hora_inicio_espera'] = ""
+        
+        vector_estado.append(fila)
+    
+    # Registrar estado inicial
+    registrar_estado("Inicializacion")
+    
+    # Función auxiliar para atender siguiente paciente en mesa
+    def atender_siguiente_paciente_mesa():
+        nonlocal mesa_libre, paciente_en_mesa, ultimo_rnd_obra_social, ultimo_obra_social_str
+        nonlocal ultimo_rnd_atencion, ultimo_tiempo_atencion, fin_atencion, fin_informe_obra_social
+        nonlocal tiempo_espera_acumulado, cantidad_personas_esperaron
+        
+        if atendiendo_llamada:
+            mesa_libre = False
+            return
+        
+        paciente_a_atender = None
+        
+        if cola_mesa_retorno:
+            paciente_a_atender = cola_mesa_retorno.pop(0)
+            tiempo_espera = reloj - paciente_a_atender.tiempo_inicio_espera
+            tiempo_espera_acumulado += tiempo_espera
+            cantidad_personas_esperaron += 1
+        elif cola_mesa_normal:
+            paciente_a_atender = cola_mesa_normal.pop(0)
+            tiempo_espera = reloj - paciente_a_atender.tiempo_inicio_espera
+            tiempo_espera_acumulado += tiempo_espera
+            cantidad_personas_esperaron += 1
+        
+        if paciente_a_atender:
+            mesa_libre = False
+            paciente_en_mesa = paciente_a_atender
+            paciente_a_atender.estado_actual = 'SAMT'
+            
+            if paciente_a_atender.tiene_obra_social is None:
+                ultimo_rnd_obra_social = random.random()
+                tiene_obra_social = ultimo_rnd_obra_social >= p_sin_obra
+                paciente_a_atender.set_obra_social(tiene_obra_social)
+                ultimo_obra_social_str = "Con obra social" if tiene_obra_social else "Sin obra social"
+            
+            if paciente_a_atender.tiene_obra_social or paciente_a_atender.vuelve_de_cooperadora:
+                ultimo_rnd_atencion, ultimo_tiempo_atencion = gen_uniforme(a1, b1)
+                fin_atencion = reloj + ultimo_tiempo_atencion
             else:
-                row_data[f'Objeto_{i+1}_Estado'] = ''
-                row_data[f'Objeto_{i+1}_Hora_inicio_espera'] = ''
-
-        filas.append(row_data)
-
-    # Estado inicial (sin mostrar RNDs de inicialización)
-    registrar("Inicializacion")
-
-    # ── Motor de eventos discretos CORREGIDO ──────────────────────────
-    while reloj < t_limite:
-        # CORRECCIÓN: Mejorar cálculo de próximo evento
-        eventos = []
-        if prox_llegada_pac < float('inf'):
-            eventos.append(("llegada_paciente", prox_llegada_pac))
-        if prox_llegada_llamada < float('inf'):
-            eventos.append(("llegada_llamada", prox_llegada_llamada))
-        if fin_atencion < float('inf'):
-            eventos.append(("fin_atencion", fin_atencion))
-        if fin_informe_obra_social < float('inf'):
-            eventos.append(("fin_informe_obra_social", fin_informe_obra_social))
-        if fin_abono_consulta < float('inf'):
-            eventos.append(("fin_abono_consulta", fin_abono_consulta))
-        if fin_llamada < float('inf'):
-            eventos.append(("fin_llamada", fin_llamada))
-            
-        if not eventos:
+                fin_informe_obra_social = reloj + tiempo_informe
+                ultimo_rnd_atencion = None
+                ultimo_tiempo_atencion = None
+        else:
+            mesa_libre = True
+            ultimo_rnd_obra_social = None
+            ultimo_obra_social_str = ""
+            ultimo_rnd_atencion = None
+            ultimo_tiempo_atencion = None
+    
+    def atender_siguiente_paciente_cooperadora():
+        nonlocal cooperadora_libre, paciente_en_cooperadora, ultimo_rnd_abono, ultimo_tiempo_abono, fin_abono_consulta
+        
+        if cola_cooperadora:
+            cooperadora_libre = False
+            paciente_en_cooperadora = cola_cooperadora.pop(0)
+            paciente_en_cooperadora.estado_actual = 'AC'
+            ultimo_rnd_abono, ultimo_tiempo_abono = gen_uniforme(a2, b2)
+            fin_abono_consulta = reloj + ultimo_tiempo_abono
+        else:
+            cooperadora_libre = True
+            ultimo_rnd_abono = None
+            ultimo_tiempo_abono = None
+    
+    # MOTOR DE SIMULACIÓN
+    while reloj < tiempo_simulacion:
+        
+        # Encontrar próximo evento
+        eventos_programados = [
+            ('llegada_paciente', prox_llegada_paciente),
+            ('llegada_llamada', prox_llegada_llamada),
+            ('fin_atencion', fin_atencion),
+            ('fin_informe_obra_social', fin_informe_obra_social),
+            ('fin_abono_consulta', fin_abono_consulta),
+            ('fin_llamada', fin_llamada)
+        ]
+        
+        eventos_validos = [(evento, tiempo) for evento, tiempo in eventos_programados if tiempo < float('inf')]
+        
+        if not eventos_validos:
             break
             
-        evento, momento = min(eventos, key=lambda x: x[1])
-        reloj = momento
-
-        # ── Procesar evento ──────────────────────────────────
-        if evento == "llegada_paciente":
-            # Generar PRÓXIMA llegada
-            rnd_llegada, tiempo_entre = gen_exponencial(media_llegada)
-            prox_llegada_pac = reloj + tiempo_entre
+        proximo_evento, momento_evento = min(eventos_validos, key=lambda x: x[1])
+        reloj = momento_evento
+        
+        # PROCESAMIENTO DE EVENTOS
+        if proximo_evento == 'llegada_paciente':
+            # Generar próxima llegada
+            ultimo_rnd_llegada, ultimo_tiempo_entre_llegadas = gen_exponencial(media_llegada)
+            prox_llegada_paciente = reloj + ultimo_tiempo_entre_llegadas
             
-            # Procesar llegada actual (nuevo paciente sin obra social definida)
-            pid = f"P{next(next_id)}"
-            nuevo_paciente = Paciente(pid, True, reloj)  # Obra social se define al ser atendido
-            nuevo_paciente.tiempo_inicio_espera = reloj
-            cola_mesa.append(nuevo_paciente)
-
-            extra = {
-                "rnd_llegada": rnd_llegada,
-                "tiempo_entre": tiempo_entre
-            }
-            registrar("llegada_paciente", extra)
-
-        elif evento == "llegada_llamada":
+            # Crear nuevo paciente
+            nuevo_pac = Paciente(f"P{next(contador_pacientes)}", reloj)
+            nuevo_pac.estado_actual = 'EAMT'
+            cola_mesa_normal.append(nuevo_pac)
+            
+            registrar_estado("llegada_paciente")
+            
+        elif proximo_evento == 'llegada_llamada':
             # Programar próxima llamada
-            prox_llegada_llamada = reloj + t_llamada
+            prox_llegada_llamada = reloj + intervalo_llamadas
             
-            if linea_ocupada:
+            if atendiendo_llamada or not mesa_libre:
+                # Línea ocupada - llamada perdida
                 llamadas_perdidas += 1
-                registrar("llegada_llamada_perdida")
+                ultimo_rnd_llamada = None
+                ultimo_tiempo_llamada = None
+                registrar_estado("llegada_llamada")
             else:
-                linea_ocupada = True
-                paciente_en_llamada = True
-                rnd_call, dur_call = gen_uniforme(c1, c2)
-                fin_llamada = reloj + dur_call
-                rnd_llamada_actual = rnd_call
-                t_llamada_actual = dur_call
-                extra = {"rnd_llamada": rnd_call, "tiempo_llamada": dur_call}
-                registrar("llegada_llamada", extra)
-
-        elif evento == "fin_llamada":
-            linea_ocupada = False
-            paciente_en_llamada = None
+                # CORRECCIÓN: Atender llamada con PRIORIDAD MÁXIMA
+                atendiendo_llamada = True
+                mesa_libre = False  # El empleado está ocupado con la llamada
+                ultimo_rnd_llamada, ultimo_tiempo_llamada = gen_uniforme(c1, c2)
+                fin_llamada = reloj + ultimo_tiempo_llamada
+                registrar_estado("llegada_llamada")
+                
+        elif proximo_evento == 'fin_llamada':
+            atendiendo_llamada = False
             fin_llamada = float('inf')
-            # Limpiar RNDs de llamada
-            rnd_llamada_actual = None
-            t_llamada_actual = None
-            registrar("fin_llamada")
-
-        elif evento == "fin_abono_consulta":
-            cooperadora_ocupada = False
-            fin_abono_consulta = float('inf')
-            if paciente_en_abono:
-                # CORRECCIÓN: El paciente vuelve a mesa con prioridad
-                paciente_en_abono.vuelve_de_cooperadora = True
-                cola_retorno.append(paciente_en_abono)
-                paciente_en_abono = None
-            # Limpiar RNDs de abono
-            rnd_abono_actual = None
-            t_abono_actual = None
-            registrar("fin_abono_consulta")
-
-        elif evento == "fin_atencion":
-            mesa_ocupada = False
+            ultimo_rnd_llamada = None
+            ultimo_tiempo_llamada = None
+            
+            atender_siguiente_paciente_mesa()
+            
+            registrar_estado("fin_llamada")
+            
+        elif proximo_evento == 'fin_atencion':
+            if paciente_en_mesa:
+                pacientes_finalizados.append(paciente_en_mesa.id)
+                paciente_en_mesa = None
+            
             fin_atencion = float('inf')
-            if paciente_en_atencion:
-                # El paciente abandona el sistema después de atención completa
-                paciente_en_atencion = None
-            # Limpiar RNDs de atención
-            rnd_att_actual = None
-            t_att_actual = None
-            registrar("fin_atencion")
-
-        elif evento == "fin_informe_obra_social":
-            mesa_ocupada = False
+            atender_siguiente_paciente_mesa()
+            registrar_estado("fin_atencion")
+            
+        elif proximo_evento == 'fin_informe_obra_social':
+            if paciente_en_mesa:
+                paciente_en_mesa.estado_actual = 'EAC'
+                cola_cooperadora.append(paciente_en_mesa)
+                paciente_en_mesa = None
+            
             fin_informe_obra_social = float('inf')
-            if paciente_en_atencion:
-                # El paciente va a cooperadora después del informe
-                cola_cooperadora.append(paciente_en_atencion)
-                paciente_en_atencion = None
-            registrar("fin_informe_obra_social")
-
-        # CORRECCIÓN: Lógica de atención en mesa - prioridad a llamadas
-        if not mesa_ocupada and not linea_ocupada:  # Solo si no hay llamada activa
-            paciente_a_atender = None
-            # Prioridad: retorno > cola normal
-            if cola_retorno:
-                paciente_a_atender = cola_retorno.pop(0)
-            elif cola_mesa:
-                paciente_a_atender = cola_mesa.pop(0)
-                # Solo contar espera para pacientes nuevos que esperaron
-                tiempo_espera = reloj - paciente_a_atender.tiempo_inicio_espera
-                espera_total += tiempo_espera
-                cnt_esperas += 1
-
-            if paciente_a_atender:
-                mesa_ocupada = True
-                paciente_en_atencion = paciente_a_atender
-
-                # LÓGICA CORREGIDA: Determinar obra social AL MOMENTO DE SER ATENDIDO
-                if not paciente_a_atender.vuelve_de_cooperadora:
-                    # Generar obra social solo si no viene de cooperadora
-                    rnd_os = random.random()
-                    paciente_a_atender.tiene_obra_social = rnd_os >= p_sin_obra
-                    
-                    extra_obra = {
-                        "rnd_obra_social": rnd_os,
-                        "obra_social": "Con obra social" if paciente_a_atender.tiene_obra_social else "Sin obra social"
-                    }
-                    registrar("determinacion_obra_social", extra_obra)
-
-                # Determinar tipo de atención según la tabla de lógica
-                if paciente_a_atender.tiene_obra_social:
-                    # CON obra social: atención completa U(1,3)
-                    rnd_att, t_att = gen_uniforme(a1, b1)
-                    fin_atencion = reloj + t_att
-                    rnd_att_actual = rnd_att
-                    t_att_actual = t_att
-                    registrar("inicio_atencion_completa")
-                    
-                elif paciente_a_atender.vuelve_de_cooperadora:
-                    # SIN obra social (RETORNO): atención completa U(1,3)
-                    rnd_att, t_att = gen_uniforme(a1, b1)
-                    fin_atencion = reloj + t_att
-                    rnd_att_actual = rnd_att
-                    t_att_actual = t_att
-                    registrar("inicio_atencion_retorno")
-                    
-                else:
-                    # SIN obra social (PRIMERA VEZ): solo informe 10 seg = 0.1667 min
-                    fin_informe_obra_social = reloj + tiempo_informe
-                    registrar("inicio_informe")
-
-        # ── Lógica de cooperadora ──
-        if not cooperadora_ocupada and cola_cooperadora:
-            cooperadora_ocupada = True
-            paciente_en_abono = cola_cooperadora.pop(0)
-            rnd_abono, tiempo_abono = gen_uniforme(a2, b2)
-            fin_abono_consulta = reloj + tiempo_abono
-            rnd_abono_actual = rnd_abono
-            t_abono_actual = tiempo_abono
-            registrar("inicio_abono_consulta")
-
-    # ── Construcción de DataFrame ──
-    df = pd.DataFrame(filas)
+            atender_siguiente_paciente_mesa()
+            registrar_estado("fin_informe_obra_social")
+            
+        elif proximo_evento == 'fin_abono_consulta':
+            if paciente_en_cooperadora:
+                paciente_en_cooperadora.marcar_retorno_cooperadora()
+                paciente_en_cooperadora.estado_actual = 'EAMT'
+                paciente_en_cooperadora.tiempo_inicio_espera = reloj
+                cola_mesa_retorno.append(paciente_en_cooperadora)
+                paciente_en_cooperadora = None
+            
+            fin_abono_consulta = float('inf')
+            atender_siguiente_paciente_cooperadora()
+            registrar_estado("fin_abono_consulta")
     
-    # Reordenar columnas según el formato del documento
-    columnas_base = [
-        'Evento', 'Reloj', 
-        'RND_llegada_paciente', 'Tiempo_entre_llegadas', 'Proxima_llegada',
-        'RND_obra_social', 'Obra_Social',
-        'RND_tiempo_atencion', 'Tiempo_de_atencion', 'fin_atencion',
-        'fin_informe_obra_social',
-        'RND_abono_consulta', 'Tiempo_de_abono_de_consulta', 'fin_abono_consulta',
-        'Proxima_llegada_llamada', 'RND_llamada', 'Tiempo_de_llamada', 'fin_llamada',
-        'Empleado_mesa_de_turno_Estado', 'Empleado_cooperadora_Estado', 'Linea_telefonica_Estado',
-        'Cantidad_de_llamadas_perdidas_por_tener_la_linea_ocupada',
-        'Acum_tiempo_de_espera', 'Cantidad_de_personas_que_esperan'
-    ]
+    # PROCESAMIENTO DE RESULTADOS
+    df_vector = pd.DataFrame(vector_estado)
+    tiempo_promedio_espera = tiempo_espera_acumulado / cantidad_personas_esperaron if cantidad_personas_esperaron > 0 else 0.0
     
-    # Agregar columnas de objetos dinámicamente
-    max_objetos = 0
-    for col in df.columns:
-        if col.startswith('Objeto_') and col.endswith('_Estado'):
-            num = int(col.split('_')[1])
-            max_objetos = max(max_objetos, num)
-    
-    for i in range(1, max_objetos + 1):
-        columnas_base.extend([f'Objeto_{i}_Estado', f'Objeto_{i}_Hora_inicio_espera'])
-    
-    # Filtrar solo las columnas que existen
-    columnas_existentes = [col for col in columnas_base if col in df.columns]
-    df = df[columnas_existentes]
-    
-    prom_esp = espera_total / cnt_esperas if cnt_esperas else 0.0
-    return df, prom_esp, llamadas_perdidas
+    return df_vector, tiempo_promedio_espera, llamadas_perdidas
 
 # -----------------------------------------------------------
-# Interfaz con Streamlit
+# Interfaz Streamlit
 # -----------------------------------------------------------
 
-st.title("Centro de Salud – Simulación (Ejercicio 72) - FORMATO FINAL CORREGIDO")
-
-st.info("""
-**CORRECCIONES IMPLEMENTADAS:**
-- ✅ Condiciones iniciales respetadas correctamente
-- ✅ Objetos temporales dinámicos (no solo 4 fijos)
-- ✅ Cálculo de eventos mejorado
-- ✅ RNDs mostrados en todos los cálculos
-- ✅ Prioridad de llamadas sobre atención de pacientes
-- ✅ Cola de retorno con prioridad para pacientes de cooperadora
-
-**Estados de Pacientes:**
-- **EAMT**: esperandoAtencionMesaTurno
-- **SAMT**: siendoAtendidoMesaTurno  
-- **EAC**: esperandoAtencionCooperadora
-- **AC**: abonandoCooperadora
-""")
-
-st.sidebar.markdown("**Parámetros básicos**")
-media_llegada = st.sidebar.number_input("Media entre llegadas (min)", 0.5, 30.0, 3.0)
-a1, b1 = st.sidebar.slider("Atención mesa (min)", 0.5, 10.0, (1.0,3.0))
-p_sin_obra = st.sidebar.slider("Proporción SIN obra social",0.0,1.0,0.55,0.05)  # 55% según documento
-tiempo_informe = st.sidebar.number_input("Tiempo informe (seg)",1,30,10) / 60  # Convertir a minutos
-a2, b2 = st.sidebar.slider("Abono cooperadora (min)",0.1,10.0,(0.8,2.4))
-
-st.sidebar.markdown("**Llamadas telefónicas**")
-t_llamada = st.sidebar.number_input("Intervalo entre llamadas (min)",0.5,10.0,3.0)
-c1, c2 = st.sidebar.slider("Duración llamada (min)",0.1,5.0,(0.5,1.5))
-
-st.sidebar.markdown("**Escenario inicial (según documento)**")
-ini_pacientes_mesa = st.sidebar.number_input("Pacientes esperando sacar turno",0,20,4)
-ini_pacientes_coop = st.sidebar.number_input("Pacientes esperando pagar consulta",0,20,2)
-ini_t_llamada = st.sidebar.number_input("Faltan min para próxima llamada",0.0,5.0,2.0)
-tiempo_simulacion = st.sidebar.number_input("Duración simulación (min)",10,1000,60)
-
-if st.sidebar.button("🚀 Iniciar Simulación"):
-    df, prom_espera, perdidas = simular_dia(
-        media_llegada, a1, b1, a2, b2, p_sin_obra, tiempo_informe,
-        t_llamada, c1, c2, ini_pacientes_mesa, ini_pacientes_coop,
-        ini_t_llamada, tiempo_simulacion,
-    )
-
-    st.subheader("📊 Vector de Estado")
-    st.dataframe(df, use_container_width=True, height=500)
-
-    st.subheader("📈 Estadísticas Finales del Ejercicio 72")
+def main():
+    st.set_page_config(page_title="Centro de Salud - Simulación Corregida", layout="wide")
     
-    col1, col2 = st.columns(2)
+    st.title("🏥 Centro de Salud – Ejercicio 72")
+
+    # Sidebar con parámetros
+    st.sidebar.markdown("## ⚙️ Parámetros de Simulación")
     
+    # Parámetros básicos
+    media_llegada = st.sidebar.number_input("Media entre llegadas (min)", 0.5, 10.0, 3.0, 0.1)
+    
+    col1, col2 = st.sidebar.columns(2)
     with col1:
-        st.metric(
-            label="🔴 A) Llamadas Perdidas", 
-            value=perdidas,
-            help="Cantidad de llamadas perdidas por tener la línea ocupada"
-        )
-    
+        a1 = st.sidebar.number_input("Mesa - Mín (min)", 0.1, 5.0, 1.0, 0.1)
+        a2 = st.sidebar.number_input("Coop - Mín (min)", 0.1, 5.0, 0.8, 0.1)
+        c1 = st.sidebar.number_input("Llamada - Mín (min)", 0.1, 3.0, 0.5, 0.1)
     with col2:
-        st.metric(
-            label="⏱️ B) Tiempo Promedio de Espera", 
-            value=f"{prom_espera:.3f} min",
-            help="Tiempo promedio de espera en cola (solo pacientes nuevos)"
-        )
-
-    # Mostrar resultados finales en formato destacado
-    st.success(f"""
-    ### 🎯 RESULTADOS FINALES - EJERCICIO 72
-
-    **A) Cantidad de llamadas perdidas por tener la línea ocupada:** `{perdidas}`
+        b1 = st.sidebar.number_input("Mesa - Máx (min)", 0.1, 5.0, 3.0, 0.1)
+        b2 = st.sidebar.number_input("Coop - Máx (min)", 0.1, 5.0, 2.4, 0.1)
+        c2 = st.sidebar.number_input("Llamada - Máx (min)", 0.1, 3.0, 1.5, 0.1)
     
-    **B) Tiempo promedio de espera en cola:** `{prom_espera:.3f} minutos`
-    """)
+    p_sin_obra = st.sidebar.slider("% Sin obra social", 0.0, 1.0, 0.45, 0.05)
+    intervalo_llamadas = st.sidebar.number_input("Intervalo llamadas (min)", 1.0, 10.0, 3.0, 0.1)
+    
+    # Condiciones iniciales
+    st.sidebar.markdown("### 🎯 Condiciones Iniciales")
+    ini_mesa = st.sidebar.number_input("Pacientes esperando turno", 0, 20, 4)
+    ini_coop = st.sidebar.number_input("Pacientes esperando pago", 0, 20, 2)
+    min_llamada = st.sidebar.number_input("Minutos para próxima llamada", 0.0, 10.0, 2.0, 0.1)
+    
+    tiempo_sim = st.sidebar.number_input("Tiempo de simulación (min)", 10, 500, 60)
+    
+    # Botón de simulación
+    if st.sidebar.button("Ejecutar Simulación", type="primary"):
+        
+        # Ejecutar simulación
+        with st.spinner("Ejecutando simulación corregida..."):
+            df_resultado, tiempo_promedio, llamadas_perdidas = simular_centro_salud(
+                media_llegada=media_llegada,
+                a1=a1, b1=b1, a2=a2, b2=b2,
+                p_sin_obra=p_sin_obra,
+                intervalo_llamadas=intervalo_llamadas,
+                c1=c1, c2=c2,
+                ini_pacientes_mesa=ini_mesa,
+                ini_pacientes_coop=ini_coop,
+                minutos_proxima_llamada=min_llamada,
+                tiempo_simulacion=tiempo_sim
+            )
+        
+        
+        
+        # Vector de estado
+        st.markdown("## 📊 Simulacion Realizada")
 
-    # Detalles adicionales
-    with st.expander("📋 Detalles de la Simulación"):
-        ultima_fila = df.iloc[-1]
-        st.write(f"**Tiempo total simulado:** {tiempo_simulacion} minutos")
-        st.write(f"**Tiempo de espera acumulado:** {ultima_fila['Acum_tiempo_de_espera']} minutos")
-        st.write(f"**Cantidad total de personas que esperaron:** {ultima_fila['Cantidad_de_personas_que_esperan']}")
+       
         
-        if ultima_fila['Cantidad_de_personas_que_esperan'] > 0:
-            st.write(f"**Cálculo promedio:** {ultima_fila['Acum_tiempo_de_espera']} ÷ {ultima_fila['Cantidad_de_personas_que_esperan']} = {prom_espera:.3f} min")
+        # Crear DataFrame con multi-índice completo
+        df_multi = df_resultado.copy()
+        
+        # Crear las columnas con multi-índice
+        nuevas_columnas = []
+        
+        # Columnas básicas (nivel 1 solo)
+        nuevas_columnas.extend([
+            ('','', 'Evento'),
+            ('','', 'Reloj')
+        ])
+        
+        # Llegada paciente
+        nuevas_columnas.extend([
+            ('', 'llegada_paciente', 'RND llegada paciente'),
+            ('', 'llegada_paciente', 'Tiempo entre llegadas'),
+            ('', 'llegada_paciente', 'Proxima llegada')
+        ])
+        
+        # Obra social
+        nuevas_columnas.extend([
+            ('Obra Social','', 'RND obra social'),
+            ('Obra Social','', 'Obra Social'),
+            ('','', 'fin_informe_obra_social')
+        ])
+        
+        # Atención
+        nuevas_columnas.extend([
+            ('', 'fin_atencion', 'RND tiempo atencion'),
+            ('','fin_atencion', 'Tiempo de atencion'),
+            ('','fin_atencion', 'fin de atencion')
+        ])
+        
+        # Cooperadora
+        nuevas_columnas.extend([
+            ('','fin_abono_consulta', 'RND abono consulta'),
+            ('','fin_abono_consulta', 'Tiempo de abono de consulta'),
+            ('','fin_abono_consulta', 'fin abono consulta')
+        ])
+        
+        # Llamadas
+        nuevas_columnas.extend([
+            ('','', 'Proxima llegada llamada'),
+            ('','fin_llamada', 'RND llamada'),
+            ('','fin_llamada', 'Tiempo de llamada'),
+            ('','fin_llamada', 'fin llamada')
+        ])
+        
+        # Objetos permanentes
+        nuevas_columnas.extend([
+            ('', 'Empleado mesa de turno', 'Estado'),
+            ('', 'Empleado mesa de turno', 'Cola'),
+            ('', 'Empleado cooperadora', 'Estado'),
+            ('', 'Empleado cooperadora', 'Cola')
+        ])
+        
+        # Estadísticas
+        nuevas_columnas.extend([
+            ('', 'Estadística A)', 'Cantidad de llamadas perdidas por tener la línea ocupada'),
+            ('', 'Estadística B)', 'Acum tiempo de espera'),
+            ('', 'Estadística B)', 'Cantidad de personas que esperan')
+        ])
+        
+        # Objetos temporales
+        for i in range(1, 11):
+            etiqueta = f"Paciente {i}"          
+            nuevas_columnas.extend([
+                ('', etiqueta, 'Estado'),
+                ('', etiqueta, 'Hora inicio espera')
+            ])
 
-    # NUEVA SECCIÓN: Verificación de correcciones
-    with st.expander("🔧 Verificación de Correcciones Implementadas"):
-        st.write("**✅ Condiciones Iniciales:**")
-        st.write(f"- Iniciado con {ini_pacientes_mesa} pacientes esperando sacar turno")
-        st.write(f"- Iniciado con {ini_pacientes_coop} pacientes esperando pagar consulta")
-        st.write(f"- Primera llamada programada en {ini_t_llamada} minutos")
         
-        st.write("**✅ Objetos Temporales Dinámicos:**")
-        num_objetos = len([col for col in df.columns if col.startswith('Objeto_') and col.endswith('_Estado')])
-        st.write(f"- Sistema maneja hasta {num_objetos} objetos temporales simultáneos")
+        # Crear mapeo de columnas antiguas a nuevas
+        columnas_originales = [
+            'Evento', 'Reloj',
+            'RND_llegada_paciente', 'Tiempo_entre_llegadas', 'Proxima_llegada',
+            'RND_obra_social', 'Obra_Social', 'fin_informe_obra_social',
+            'RND_tiempo_atencion', 'Tiempo_de_atencion', 'fin_atencion',
+            'RND_abono_consulta', 'Tiempo_de_abono_de_consulta', 'fin_abono_consulta',
+            'Proxima_llegada_llamada', 'RND_llamada', 'Tiempo_de_llamada', 'fin_llamada',
+            'Empleado_mesa_estado', 'Empleado_mesa_cola',
+            'Empleado_cooperadora_estado', 'Empleado_cooperadora_cola',
+            'Cantidad_de_llamadas_perdidas_por_tener_la_linea_ocupada',
+            'Acum_tiempo_de_espera', 'Cantidad_de_personas_que_esperan'
+        ]
         
-        st.write("**✅ RNDs Mostrados:**")
-        st.write("- Todos los cálculos muestran los números aleatorios utilizados")
-        st.write("- RNDs se limpian apropiadamente al finalizar eventos")
+        # Agregar columnas de objetos temporales
+        for i in range(1, 11):
+            columnas_originales.extend([
+                f'Objeto_{i}_Estado',
+                f'Objeto_{i}_Hora_inicio_espera'
+            ])
         
-        st.write("**✅ Prioridades Implementadas:**")
-        st.write("- Las llamadas tienen prioridad sobre la atención de pacientes")
-        st.write("- Los pacientes que vuelven de cooperadora tienen prioridad en la cola")
+        # Filtrar solo las columnas que existen
+        columnas_existentes = [col for col in columnas_originales if col in df_multi.columns]
+        nuevas_columnas_filtradas = nuevas_columnas[:len(columnas_existentes)]
+        
+        # Crear DataFrame con multi-índice
+        df_reordenado = df_multi[columnas_existentes].copy()
+        
+        # Crear el multi-índice
+        multi_index = pd.MultiIndex.from_tuples(nuevas_columnas_filtradas)
+        df_reordenado.columns = multi_index
+        
+        st.dataframe(df_reordenado, use_container_width=True, height=500)
+
+         # Mostrar estadísticas principales
+        st.markdown("## 📈 Estadísticas Calculadas")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                "🔴 A) Llamadas Perdidas", 
+                value=llamadas_perdidas,
+                help="Llamadas perdidas por línea ocupada (empleado ocupado o ya atendiendo llamada)"
+            )
+        with col2:
+            st.metric(
+                "⏱️ B) Tiempo Promedio de Espera", 
+                value=f"{tiempo_promedio:.3f} min",
+                help="Tiempo promedio de espera en cola (incluye esperas por llamadas)"
+            )
+        
+        # Mostrar información adicional
+        st.markdown("### 📋 Leyenda de Estados:")
+        st.markdown("""
+        - **SAMT**: Siendo Atendido en Mesa de Turnos
+        - **EAMT**: Esperando Atención en Mesa de Turnos  
+        - **AC**: Abonando en Cooperadora
+        - **EAC**: Esperando Abono en Cooperadora
+        - **----**: Paciente que finalizó completamente
+        """)
+
+if __name__ == "__main__":
+    main()
